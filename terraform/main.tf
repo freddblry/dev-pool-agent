@@ -129,8 +129,11 @@ resource "azurerm_linux_virtual_machine" "main" {
     version   = "latest"
   }
 
-  # Configuration cloud-init pour installer l'agent Azure DevOps
-  custom_data = base64encode(file("../scripts/cloud-init.yml"))
+# Dans la ressource azurerm_linux_virtual_machine, remplacez cette ligne :
+# custom_data = base64encode(file("../scripts/cloud-init.yml"))
+
+# Par celle-ci :
+custom_data = base64encode(file("${path.module}/../scripts/cloud-init.yml"))
 
   tags = var.default_tags
 }
