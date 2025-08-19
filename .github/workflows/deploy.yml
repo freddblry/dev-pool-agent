@@ -1,0 +1,125 @@
+name: 🚀 Deploy Azure DevOps Agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      vm_name:
+        description: 'Nom de la VM et de l agent'
+        required: true
+        default: 'ado-agent-vm'
+      vm_size:
+        description: 'Taille de la VM'
+        required: true
+        default: 'Standard_B2s'
+        type: choice
+        options:
+          - Standard_B1s
+          - Standard_B2s
+          - Standard_B4ms
+          - Standard_D2s_v3
+      azdo_org:
+        description: 'Organisation Azure DevOps'
+        required: true
+      azdo_agent_pool:
+        description: 'Pool d agents Azure DevOps'
+        required: true
+        default: 'Default'
+      admin_username:
+        description: 'Nom d utilisateur admin de la VM'
+        required: true
+        default: 'azureuser'
+
+env:
+  TF_VERSION: '1.5.0'
+  ARM_USE_OIDC: true
+
+jobs:
+  deploy:
+    name: 🏗️ Déploiement Infrastructure
+    runs-on: ubuntu-latest
+    environment: production
+    
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: 📥 Checkout du code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Connexion Azure via OIDC
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ⚙️ Configuration Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: 📝 Génération du fichier cloud-init
+        working-directory: ./scripts
+        env:
+          ADMIN_SSH_PUBLIC_KEY: ${{ secrets.ADMIN_SSH_PUBLIC_KEY }}
+          AZDO_ORG: ${{ github.event.inputs.azdo_org }}
+          AZDO_PAT: ${{ secrets.AZDO_PAT }}
+          AZDO_AGENT_POOL: ${{ github.event.inputs.azdo_agent_pool }}
+          VM_NAME: ${{ github.event.inputs.vm_name }}
+          VM_USER: ${{ github.event.inputs.admin_username }}
+          CLOUD_INIT_FILE: "cloud-init.yml"
+        run: |
+          # Génération du cloud-init avec variables d'environnement
+          ./generate-cloud-init.sh
+
+      - name: 🔧 Terraform Init
+        working-directory: ./terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}" \
+            -backend-config="key=ado-agent-${{ github.event.inputs.vm_name }}.tfstate"
+
+      - name: 📋 Terraform Plan
+        working-directory: ./terraform
+        run: |
+          terraform plan \
+            -var="vm_name=${{ github.event.inputs.vm_name }}" \
+            -var="vm_size=${{ github.event.inputs.vm_size }}" \
+            -var="admin_username=${{ github.event.inputs.admin_username }}" \
+            -var="admin_ssh_public_key=${{ secrets.ADMIN_SSH_PUBLIC_KEY }}" \
+            -out=tfplan
+
+      - name: 🚀 Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply tfplan
+
+      - name: 📊 Récupération des outputs
+        working-directory: ./terraform
+        id: outputs
+        run: |
+          echo "public_ip=$(terraform output -raw public_ip_address)" >> $GITHUB_OUTPUT
+          echo "ssh_command=ssh ${{ github.event.inputs.admin_username }}@$(terraform output -raw public_ip_address)" >> $GITHUB_OUTPUT
+
+      - name: 📋 Résumé du déploiement
+        run: |
+          echo "## 🎉 Déploiement terminé avec succès !" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Informations de la VM" >> $GITHUB_STEP_SUMMARY
+          echo "- **Nom de la VM :** ${{ github.event.inputs.vm_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Taille :** ${{ github.event.inputs.vm_size }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **IP publique :** ${{ steps.outputs.outputs.public_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Utilisateur :** ${{ github.event.inputs.admin_username }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Connexion SSH" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.outputs.outputs.ssh_command }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⏱️ Prochaines étapes" >> $GITHUB_STEP_SUMMARY
+          echo "1. Attendez 5-10 minutes que cloud-init termine la configuration" >> $GITHUB_STEP_SUMMARY
+          echo "2. Testez la connexion SSH" >> $GITHUB_STEP_SUMMARY
+          echo "3. Vérifiez que l'agent apparaît en ligne dans Azure DevOps" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,24 @@
+# Exemple de fichier de variables Terraform
+# Copiez ce fichier vers terraform.tfvars et personnalisez les valeurs
+
+# Configuration de la VM
+vm_name        = "ado-agent-vm-01"
+vm_size        = "Standard_B2s"
+location       = "West Europe"
+admin_username = "azureuser"
+
+# Clé SSH publique (remplacez par votre clé)
+admin_ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2E... votre-email@example.com"
+
+# Restriction d'accès SSH (recommandé en production)
+allowed_ssh_ips = [
+  "0.0.0.0/0"  # ⚠️ Remplacez par votre IP publique : ["XXX.XXX.XXX.XXX/32"]
+]
+
+# Tags personnalisés (optionnel)
+default_tags = {
+  Environment = "production"
+  Project     = "azure-devops-agent"
+  ManagedBy   = "terraform"
+  Owner       = "votre-nom"
+}
