@@ -4,6 +4,7 @@ terraform {
   # Backend Azure pour stocker l'état Terraform
   backend "azurerm" {
     # Configuration fournie via -backend-config dans GitHub Actions
+  lock_timeout = "5m"
   }
 
   required_providers {
