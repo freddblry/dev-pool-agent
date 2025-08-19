@@ -62,17 +62,135 @@ jobs:
 
       - name: 📝 Génération du fichier cloud-init
         working-directory: ./scripts
-        env:
-          ADMIN_SSH_PUBLIC_KEY: ${{ secrets.ADMIN_SSH_PUBLIC_KEY }}
-          AZDO_ORG: ${{ github.event.inputs.azdo_org }}
-          AZDO_PAT: ${{ secrets.AZDO_PAT }}
-          AZDO_AGENT_POOL: ${{ github.event.inputs.azdo_agent_pool }}
-          VM_NAME: ${{ github.event.inputs.vm_name }}
-          VM_USER: ${{ github.event.inputs.admin_username }}
-          CLOUD_INIT_FILE: "cloud-init.yml"
         run: |
-          # Génération du cloud-init avec variables d'environnement
-          ./generate-cloud-init.sh
+          # Création directe du fichier cloud-init avec les variables
+          cat > cloud-init.yml << 'CLOUD_INIT_EOF'
+          #cloud-config
+          # Configuration automatique pour agent Azure DevOps self-hosted
+          
+          package_update: true
+          package_upgrade: true
+          
+          packages:
+            - curl
+            - tar
+            - jq
+            - git
+            - wget
+            - unzip
+            - build-essential
+            - apt-transport-https
+            - ca-certificates
+            - gnupg
+            - lsb-release
+          
+          users:
+            - name: ${{ github.event.inputs.admin_username }}
+              groups: sudo
+              shell: /bin/bash
+              sudo: ['ALL=(ALL) NOPASSWD:ALL']
+              ssh_authorized_keys:
+                - ${{ secrets.ADMIN_SSH_PUBLIC_KEY }}
+          
+          write_files:
+            - path: /tmp/install-agent.sh
+              permissions: '0755'
+              content: |
+                #!/bin/bash
+                set -euo pipefail
+                
+                echo "🔧 Installation de l'agent Azure DevOps..."
+                
+                # Attendre que le système soit prêt
+                sleep 30
+                
+                # Création du répertoire agent
+                mkdir -p /opt/azuredevops-agent
+                cd /opt/azuredevops-agent
+                
+                # Téléchargement de la dernière version
+                echo "📥 Téléchargement de l'agent..."
+                wget -q https://vstsagentpackage.azureedge.net/agent/3.232.0/vsts-agent-linux-x64-3.232.0.tar.gz -O agent.tar.gz
+                
+                if [ ! -f agent.tar.gz ]; then
+                  echo "❌ Échec du téléchargement"
+                  exit 1
+                fi
+                
+                # Extraction
+                echo "📦 Extraction de l'agent..."
+                tar xzf agent.tar.gz
+                rm agent.tar.gz
+                
+                # Configuration des permissions
+                chown -R ${{ github.event.inputs.admin_username }}:${{ github.event.inputs.admin_username }} /opt/azuredevops-agent
+                
+                # Installation des dépendances
+                echo "📦 Installation des dépendances..."
+                ./bin/installdependencies.sh
+                
+                # Configuration de l'agent
+                echo "⚙️ Configuration de l'agent..."
+                sudo -u ${{ github.event.inputs.admin_username }} bash -c '
+                  cd /opt/azuredevops-agent
+                  ./config.sh \
+                    --unattended \
+                    --url "https://dev.azure.com/${{ github.event.inputs.azdo_org }}" \
+                    --auth pat \
+                    --token "${{ secrets.AZDO_PAT }}" \
+                    --pool "${{ github.event.inputs.azdo_agent_pool }}" \
+                    --agent "${{ github.event.inputs.vm_name }}" \
+                    --acceptTeeEula \
+                    --replace
+                '
+                
+                if [ $? -eq 0 ]; then
+                  echo "✅ Agent configuré avec succès"
+                else
+                  echo "❌ Échec de la configuration de l'agent"
+                  exit 1
+                fi
+                
+                # Installation et démarrage du service
+                echo "🔄 Installation du service..."
+                ./svc.sh install ${{ github.event.inputs.admin_username }}
+                ./svc.sh start
+                
+                # Vérification
+                sleep 10
+                if ./svc.sh status | grep -q "active"; then
+                  echo "✅ Service démarré avec succès"
+                else
+                  echo "⚠️ Problème avec le service"
+                  ./svc.sh status
+                fi
+          
+          runcmd:
+            # Configuration des permissions SSH
+            - chmod 700 /home/${{ github.event.inputs.admin_username }}/.ssh
+            - chmod 600 /home/${{ github.event.inputs.admin_username }}/.ssh/authorized_keys
+            - chown -R ${{ github.event.inputs.admin_username }}:${{ github.event.inputs.admin_username }} /home/${{ github.event.inputs.admin_username }}/.ssh
+            
+            # Attendre que le réseau soit stable
+            - sleep 60
+            
+            # Exécution du script d'installation de l'agent
+            - echo "🚀 Démarrage de l'installation de l'agent Azure DevOps..."
+            - /tmp/install-agent.sh > /var/log/agent-install.log 2>&1
+            
+            # Message de fin
+            - echo "🎉 Configuration terminée ! Agent ${{ github.event.inputs.vm_name }} prêt dans le pool ${{ github.event.inputs.azdo_agent_pool }}"
+          
+          timezone: Europe/Paris
+          
+          # Pas de redémarrage automatique pour éviter les interruptions
+          power_state:
+            mode: poweroff
+            condition: False
+          CLOUD_INIT_EOF
+          
+          echo "✅ Fichier cloud-init généré"
+          cat cloud-init.yml
 
       - name: 🔧 Terraform Init
         working-directory: ./terraform
@@ -100,6 +218,44 @@ jobs:
         working-directory: ./terraform
         run: terraform apply tfplan
 
+      - name: ⏰ Attente de la configuration cloud-init
+        run: |
+          echo "⏰ Attente de la configuration cloud-init (10 minutes)..."
+          sleep 600
+
+      - name: 🔍 Vérification de l'installation de l'agent
+        working-directory: ./terraform
+        run: |
+          PUBLIC_IP=$(terraform output -raw public_ip_address)
+          echo "🔍 Vérification de l'installation sur $PUBLIC_IP..."
+          
+          # Test de connexion SSH
+          for i in {1..5}; do
+            if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${{ github.event.inputs.admin_username }}@$PUBLIC_IP "echo 'SSH OK'"; then
+              echo "✅ Connexion SSH établie"
+              break
+            else
+              echo "⏳ Tentative $i/5 - Attente de la VM..."
+              sleep 30
+            fi
+          done
+          
+          # Vérification des logs cloud-init
+          echo "📋 Vérification des logs cloud-init..."
+          ssh -o StrictHostKeyChecking=no ${{ github.event.inputs.admin_username }}@$PUBLIC_IP "
+            echo '=== CLOUD-INIT STATUS ==='
+            sudo cloud-init status
+            
+            echo '=== AGENT INSTALLATION LOG ==='
+            sudo tail -50 /var/log/agent-install.log || echo 'Log non trouvé'
+            
+            echo '=== AGENT SERVICE STATUS ==='
+            sudo systemctl status vsts-agent-* || echo 'Service non trouvé'
+            
+            echo '=== AGENT DIRECTORY ==='
+            ls -la /opt/azuredevops-agent/ || echo 'Répertoire non trouvé'
+          " || echo "⚠️ Impossible de vérifier l'état de l'agent"
+
       - name: 📊 Récupération des outputs
         working-directory: ./terraform
         id: outputs
@@ -107,22 +263,34 @@ jobs:
           echo "public_ip=$(terraform output -raw public_ip_address)" >> $GITHUB_OUTPUT
           echo "ssh_command=ssh ${{ github.event.inputs.admin_username }}@$(terraform output -raw public_ip_address)" >> $GITHUB_OUTPUT
 
-      - name: 📋 Résumé du déploiement
+      - name: 📊 Résumé du déploiement
+        working-directory: ./terraform
         run: |
-          echo "## 🎉 Déploiement terminé avec succès !" >> $GITHUB_STEP_SUMMARY
+          PUBLIC_IP=$(terraform output -raw public_ip_address)
+          
+          echo "## 🎉 Déploiement terminé !" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📋 Informations de la VM" >> $GITHUB_STEP_SUMMARY
           echo "- **Nom de la VM :** ${{ github.event.inputs.vm_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Taille :** ${{ github.event.inputs.vm_size }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **IP publique :** ${{ steps.outputs.outputs.public_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **IP publique :** $PUBLIC_IP" >> $GITHUB_STEP_SUMMARY
           echo "- **Utilisateur :** ${{ github.event.inputs.admin_username }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Organisation Azure DevOps :** ${{ github.event.inputs.azdo_org }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pool d'agents :** ${{ github.event.inputs.azdo_agent_pool }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔗 Connexion SSH" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.outputs.outputs.ssh_command }}" >> $GITHUB_STEP_SUMMARY
+          echo "ssh ${{ github.event.inputs.admin_username }}@$PUBLIC_IP" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Diagnostic en cas de problème" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "./scripts/diagnose-agent.sh $PUBLIC_IP ${{ github.event.inputs.admin_username }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ⏱️ Prochaines étapes" >> $GITHUB_STEP_SUMMARY
-          echo "1. Attendez 5-10 minutes que cloud-init termine la configuration" >> $GITHUB_STEP_SUMMARY
-          echo "2. Testez la connexion SSH" >> $GITHUB_STEP_SUMMARY
-          echo "3. Vérifiez que l'agent apparaît en ligne dans Azure DevOps" >> $GITHUB_STEP_SUMMARY
+          echo "1. ⏰ Attendez 10-15 minutes que cloud-init termine la configuration" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🔗 Testez la connexion SSH" >> $GITHUB_STEP_SUMMARY
+          echo "3. 🕵️ Vérifiez que l'agent apparaît en ligne dans Azure DevOps :" >> $GITHUB_STEP_SUMMARY
+          echo "   \`https://dev.azure.com/${{ github.event.inputs.azdo_org }}/_settings/agentpools\`" >> $GITHUB_STEP_SUMMARY
+          echo "4. 🛠️ En cas de problème, utilisez le script de diagnostic ci-dessus" >> $GITHUB_STEP_SUMMARY
