@@ -81,7 +81,9 @@ jobs:
             -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
             -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
             -backend-config="container_name=${{ secrets.TF_BACKEND_CONTAINER }}" \
-            -backend-config="key=ado-agent-${{ github.event.inputs.vm_name }}.tfstate"
+            -backend-config="key=ado-agent-${{ github.event.inputs.vm_name }}.tfstate" \
+            -backend-config="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -backend-config="client_id=${{ secrets.AZURE_CLIENT_ID }}"
 
       - name: 📋 Terraform Plan
         working-directory: ./terraform
