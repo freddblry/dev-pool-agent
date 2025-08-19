@@ -8,8 +8,8 @@ location       = "West Europe"
 admin_username = "azureuser"
 
 # Clé SSH publique (remplacez par votre clé)
-admin_ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2E... votre-email@example.com"
-
+#admin_ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2E... votre-email@example.com"
+admin_ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCvIzk0zLB98E+0B2gxZT4AryR7dsMmc9oIrRGL+lFtyzNT3qfUjGcKlUghwguhgh/lGicUAcrzn5/YxmImd8HqkToRkYc6bzGU7i9+TiBZw0YOPYmPgMDEd5bZ2/qCq0VwyxOSjXZ53PRh4hPr3phVlPISgK/kFyr0AM5N1dNm/wVCdII2SPn5lOoAKaJ86VDv2ZcyFwCAmN2nnhbDwysIl8mKp/9CpUoP8GUOyGIBGCBu0y0HKgALe02eW5jevDCxqJ7WN7ZGcnXRYGBtPhSfENCoVjs0+kvMZfpqn9ZTT4bLGh0QZkP1Gf5LRXbxYg9kv5lTs823JsnBKDRc4seWznleAQ18/mlQb+EaR+FBq3AYJU9obmW/ONYZBRNVRzv6Vp/jinGi5QIoB+nrkImIbkgDj5Kj8sxiuIhaLqCnmLQfrpSQm5zGZ4SjnMqzcZpQklVNg9lRfmpQwiLAMbXzVAM4Eyi/QgPGo2d07YnFWmYq2GX/0oEX1rhgvAR82QFrz7unSXXK2EzJuuB8N8ehrLRohMwDaNRUXEgRYW2n7A37KYBCfcSEVLKSJ+56P9F5GaRqD+1ZQMC1udQ1sCTAysoTWhCkWJoYyOpoXVjEudYs+RX3YpVpnib/Rn+1yhxowqcColocfsWyp/h5STbjxt9D9UPSLpzW4NgW0UDxUw== azure-devops-agent"
 # Restriction d'accès SSH (recommandé en production)
 allowed_ssh_ips = [
   "0.0.0.0/0"  # ⚠️ Remplacez par votre IP publique : ["XXX.XXX.XXX.XXX/32"]
